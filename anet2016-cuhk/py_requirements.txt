@@ -1,4 +1,0 @@
-easydict
-protobuf
-youtube-dl
-Flask
