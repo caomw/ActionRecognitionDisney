@@ -8,6 +8,7 @@ import numpy as np
 import time
 import youtube_dl
 import os
+from cache_manager import CacheManager
 
 
 def _dummy_vid_info(url=''):
@@ -70,7 +71,7 @@ class ActionClassifier(object):
         if self.__need_flow:
             self.__flow_extractor = FlowExtractor(dev_id)
 
-    def classify(self, video, model_mask=None):
+    def classify(self, video, model_mask=None, cache_manager=None):
         """
 
         Args:
@@ -83,17 +84,18 @@ class ActionClassifier(object):
         import urlparse
 
         if os.path.isfile(video):
-            return self._classify_from_file(video, model_mask)
+            return self._classify_from_file(video, model_mask, cache_manager)
         elif urlparse.urlparse(video).scheme != "":
-            return self._classify_from_url(video, model_mask)
+            return self._classify_from_url(video, model_mask, cache_manager)
 
         raise ValueError("Unknown input data type")
 
-    def _classify_from_file(self, filename, model_mask):
+    def _classify_from_file(self, filename, model_mask, cache_manager = None):
         """
         Input a file on harddisk
         Args:
             filename:
+            cache: cache intermediate results and use previously cached intermediate result is possible
 
         Returns:
             cls: classification scores
@@ -105,14 +107,18 @@ class ActionClassifier(object):
         video_proc.open_video(True)
 
         # here we use interval of 30, roughly 1FPS
-        frm_it = video_proc.frame_iter(timely=False, ignore_err=True, interval=30,
-                                       length=6 if self.__need_flow else 1,
-                                       new_size=(340, 256))
+        frm_it = None
+        cached_flow = None
+        if cache_manager is not None:
+            frm_it = cache_manager.load(videoname=filename, type="framestack")
+            cached_flow = cache_manager.load(videoname=filename, type="flowstack")
+        if frm_it is None:
+            frm_it = video_proc.frame_iter(timely=False, ignore_err=True, interval=30,
+                                           length=6 if self.__need_flow else 1,
+                                           new_size=(340, 256))
 
         all_scores = []
         all_start = time.clock()
-
-        cnt = 0
 
         # process model mask
         mask = [True] * self.__num_net
@@ -124,7 +130,13 @@ class ActionClassifier(object):
                     n_model -= 1
 
 
+        frame_cache = []
+        flow_cache = []
+        cnt = 0
         for frm_stack in frm_it:
+
+            if cache_manager is not None:
+                frame_cache.append(frm_stack)
 
             start = time.clock()
             cnt += 1
@@ -140,7 +152,6 @@ class ActionClassifier(object):
 
                 if in_type == 0:
                     # RGB input
-
                     frm_scores.append(net.predict_single_frame(frm_stack[:1], self.__score_name,
                                                                over_sample=not conv_support,
                                                                frame_size=None if net_input_size == 224 else frame_size
@@ -149,15 +160,25 @@ class ActionClassifier(object):
                     # Flow input
                     if flow_stack is None:
                         # Extract flow if necessary
-                        flow_stack = self.__flow_extractor.extract_flow(frm_stack, frame_size)
+                        if cached_flow is not None:
+                            flow_stack = cached_flow[cnt-1]
+                        else:
+                            flow_stack = self.__flow_extractor.extract_flow(frm_stack, frame_size)
+                        if cache_manager is not None:
+                            flow_cache.append(flow_stack)
 
                     frm_scores.append(net.predict_single_flow_stack(flow_stack, self.__score_name,
                                                                     over_sample=not conv_support))
-
             all_scores.append(frm_scores)
             end = time.clock()
             elapsed = end - start
-            print "frame sample {}: {} second".format(cnt, elapsed)
+            # print "frame sample {}: {} second".format(cnt, elapsed)
+
+        if cache_manager is not None:
+            if len(frame_cache) != 0:
+                cache_manager.dump(frame_cache, filename, "framestack")
+            if len(flow_cache) != 0:
+                cache_manager.dump(flow_cache, filename, "flowstack")
 
         # aggregate frame-wise scores
         agg_scores = []
@@ -169,11 +190,11 @@ class ActionClassifier(object):
 
         all_end = time.clock()
         total_time = all_end - all_start
-        print "total time: {} second".format(total_time)
-
+        # print "total time: {} second".format(total_time)
+        print('{0} processed.'.format(filename))
         return final_scores, all_scores, total_time
 
-    def _classify_from_url(self, url, model_mask):
+    def _classify_from_url(self, url, model_mask, cache_manager = None):
         """
         This function classify an video based on input video url
         It will first use Youtube-dl to download the video. Then will do classification on the downloaded file
@@ -185,7 +206,7 @@ class ActionClassifier(object):
         file_info = self.__video_dl.extract_info(url) # it also downloads the video file
         filename = file_info['id']+'.'+file_info['ext']
 
-        scores, frm_scores, total_time = self._classify_from_file(filename, model_mask)
+        scores, frm_scores, total_time = self._classify_from_file(filename, model_mask, cache_manager)
         import os
         os.remove(filename)
         return scores, frm_scores, total_time

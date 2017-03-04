@@ -16,7 +16,6 @@ sys.path.append(anet_home)
 
 from pyActionRec.action_classifier import ActionClassifier
 from pyActionRec.anet_db import ANetDB
-from pyActionRec.cache_manager import CacheManager
 import argparse
 import numpy as np
 
@@ -44,11 +43,8 @@ if USE_FLOW:
                    'models/bn_inception_anet_2016_temporal.caffemodel.v5',
                    0.2, 1, False, 224))
 
-
-
 cls = ActionClassifier(models, dev_id=GPU)
-cm = CacheManager('.cache')
-rst = cls.classify(VIDEO_NAME, None)
+rst = cls.classify(VIDEO_NAME)
 
 scores = rst[0]
 
