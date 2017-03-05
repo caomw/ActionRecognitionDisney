@@ -1,11 +1,15 @@
-from flask import Flask
-from flask import url_for
+import flask
 
-app = Flask(__name__)
+app = flask.Flask(__name__)
 
 # simple routing
 @app.route('/')
 @app.route('/index')
 def main_page():
-    return 'Video Action Recognition Analyzing Platform(VARAP)'
+    return flask.render_template('index.html')
+
+
+@app.route('/hello')
+def hello_template():
+    return flask.render_template('hello_world.html', name='MSCV')
 
